@@ -1,0 +1,341 @@
+sudo mkdir -p /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site
+ Then, create a new docker-compose.yml file
+
+sudo nano /docker/letsencrypt-docker-nginx/src/letsencrypt/docker-compose.yml
+docker-compose.yml
+
+version: '3.1'
+
+services:
+
+  letsencrypt-nginx-container:
+    container_name: 'letsencrypt-nginx-container'
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./letsencrypt-site:/usr/share/nginx/html
+    networks:
+      - docker-network
+
+networks:
+  docker-network:
+    driver: bridge
+The docker-compose.yml file does the following:
+
+Pulls the latest version of Nginx from the Docker registry
+Exposes port 80 on the container to port 80 on the host, which means that requests to your domain on port 80 will be forwarded to nginx running in the Docker container
+Maps the nginx configuration file that we will create in the next step to the configuration location in the Nginx container. When the container starts, it will load our custom configuration
+Maps the /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site location to the default location of Nginx in the container. In this instance, it's not really necessary, as the site only needs to be used for the purposes of a challenge request, but it's always good to place a default HTML file for troubleshooting purposes.
+Creates a default Docker network
+ Then, create a configuration file for nginx
+
+sudo nano /docker/letsencrypt-docker-nginx/src/letsencrypt/nginx.conf
+nginx.conf
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ohhaithere.com www.ohhaithere.com;
+
+    location ~ /.well-known/acme-challenge {
+        allow all;
+        root /usr/share/nginx/html;
+    }
+
+    root /usr/share/nginx/html;
+    index index.html;
+}
+The nginx configuration file does the following:
+
+Listens for requests on port 80 for URLs ohhaithere.com and www.ohhaithere.com
+Gives the Certbot agent access to ./well-known/acme-challenge
+Sets the default root and file
+Next, create an index.html file
+
+sudo nano /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site/index.html
+index.html
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Let's Encrypt First Time Cert Issue Site</title>
+</head>
+<body>
+    <h1>Oh, hai there!</h1>
+    <p>
+        This is the temporary site that will only be used for the very first time SSL certificates are issued by Let's Encrypt's
+        certbot.
+    </p>
+</body>
+</html>
+Before running the Certbot command, spin up a Nginx container in Docker to ensure the temporary Nginx site is up and running
+
+cd /docker/letsencrypt-docker-nginx/src/letsencrypt
+sudo docker-compose up -d
+
+
+Run the staging command for issuing a new certificate:
+
+sudo docker run -it --rm \
+-v /docker-volumes/etc/letsencrypt:/etc/letsencrypt \
+-v /docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt \
+-v /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site:/data/letsencrypt \
+-v "/docker-volumes/var/log/letsencrypt:/var/log/letsencrypt" \
+certbot/certbot \
+certonly --webroot \
+--register-unsafely-without-email --agree-tos \
+--webroot-path=/data/letsencrypt \
+--staging \
+-d ohhaithere.com -d www.ohhaithere.com
+
+
+sudo docker run --rm -it --name certbot \
+-v /docker-volumes/etc/letsencrypt:/etc/letsencrypt \
+-v /docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt \
+-v /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site:/data/letsencrypt \
+certbot/certbot \
+--staging \
+certificates
+
+
+
+If the staging command executed successfully, execute the command to return a live certificate
+
+First, clean up staging artifacts:
+
+sudo rm -rf /docker-volumes/
+And then request a production certificate: (note that it's a good idea to supply your email address so that Let's Encrypt can send expiry notifications)
+
+sudo docker run -it --rm \
+-v /docker-volumes/etc/letsencrypt:/etc/letsencrypt \
+-v /docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt \
+-v /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site:/data/letsencrypt \
+-v "/docker-volumes/var/log/letsencrypt:/var/log/letsencrypt" \
+certbot/certbot \
+certonly --webroot \
+--email youremail@domain.com --agree-tos --no-eff-email \
+--webroot-path=/data/letsencrypt \
+-d ohhaithere.com -d www.ohhaithere.com
+If everything ran successfully, run a docker-compose down command to stop the temporary Nginx site
+
+cd /docker/letsencrypt-docker-nginx/src/letsencrypt
+sudo docker-compose down
+
+
+
+
+Create the directories for our production site
+
+sudo mkdir -p /docker/letsencrypt-docker-nginx/src/production/production-site
+sudo mkdir -p /docker/letsencrypt-docker-nginx/src/production/dh-param
+Let's start with the docker-compose.yml file
+
+sudo nano /docker/letsencrypt-docker-nginx/src/production/docker-compose.yml
+docker-compose.yml
+
+version: '3.1'
+
+services:
+
+  production-nginx-container:
+    container_name: 'production-nginx-container'
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./production.conf:/etc/nginx/conf.d/default.conf
+      - ./production-site:/usr/share/nginx/html
+      - ./dh-param/dhparam-2048.pem:/etc/ssl/certs/dhparam-2048.pem
+      - /docker-volumes/etc/letsencrypt/live/ohhaithere.com/fullchain.pem:/etc/letsencrypt/live/ohhaithere.com/fullchain.pem
+      - /docker-volumes/etc/letsencrypt/live/ohhaithere.com/privkey.pem:/etc/letsencrypt/live/ohhaithere.com/privkey.pem
+    networks:
+      - docker-network
+
+networks:
+  docker-network:
+    driver: bridge
+The docker-compose does the following:
+
+Allows ports 80 and 443
+Maps the production Nginx configuration file into the container
+Maps the production site content into the container
+Maps a 2048 bit Diffie–Hellman key exchange file into the container
+Maps the public and private keys into the container
+Sets up a docker network
+Next, create the Nginx configuration file for the production site
+
+sudo nano /docker/letsencrypt-docker-nginx/src/production/production.conf
+production.conf
+
+server {
+    listen      80;
+    listen [::]:80;
+    server_name ohhaithere.com www.ohhaithere.com;
+
+    location / {
+        rewrite ^ https://$host$request_uri? permanent;
+    }
+
+    #for certbot challenges (renewal process)
+    location ~ /.well-known/acme-challenge {
+        allow all;
+        root /data/letsencrypt;
+    }
+}
+
+#https://ohhaithere.com
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ohhaithere.com;
+
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/ohhaithere.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ohhaithere.com/privkey.pem;
+
+    ssl_buffer_size 8k;
+
+    ssl_dhparam /etc/ssl/certs/dhparam-2048.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.1 TLSv1;
+    ssl_prefer_server_ciphers on;
+
+    ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+
+    ssl_ecdh_curve secp384r1;
+    ssl_session_tickets off;
+
+    # OCSP stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 8.8.8.8;
+
+    return 301 https://www.ohhaithere.com$request_uri;
+}
+
+#https://www.ohhaithere.com
+server {
+    server_name www.ohhaithere.com;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+
+    server_tokens off;
+
+    ssl on;
+
+    ssl_buffer_size 8k;
+    ssl_dhparam /etc/ssl/certs/dhparam-2048.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.1 TLSv1;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+
+    ssl_ecdh_curve secp384r1;
+    ssl_session_tickets off;
+
+    # OCSP stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 8.8.8.8 8.8.4.4;
+
+    ssl_certificate /etc/letsencrypt/live/ohhaithere.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ohhaithere.com/privkey.pem;
+
+    root /usr/share/nginx/html;
+    index index.html;
+}
+Generate a 2048 bit DH Param file
+
+sudo openssl dhparam -out /docker/letsencrypt-docker-nginx/src/production/dh-param/dhparam-2048.pem 2048
+Copy your site content into the mapped directory:
+
+/docker/letsencrypt-docker-nginx/src/production/production-site/
+Spin up the production site in a Docker container:
+
+cd /docker/letsencrypt-docker-nginx/src/production
+sudo docker-compose up -d
+
+
+
+How to Renew Let's Encrypt SSL Certificates with Certbot and Docker
+Earlier, we placed the following section in the production Nginx configuration file:
+
+location ~ /.well-known/acme-challenge {
+    allow all;
+    root /usr/share/nginx/html;
+}
+The production site's docker-compose file then maps a volume into the Nginx container that can be used for challenge requests:
+
+production-nginx-container:
+    container_name: 'production-nginx-container'
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      #other mapped volumes...
+      #for certbot challenges
+      - /docker-volumes/data/letsencrypt:/data/letsencrypt
+    networks:
+      - docker-network
+This effectively allows Certbot to perform a challenge request. It's important to note that certbot challenge requests will be performed using port 80 over HTTP, so ensure that you enable port 80 for your production site.
+
+All that's left to do is to set up a cron job that will execute a certbot command to renew Let's Encrypt SSL certificates.
+
+Set Up a Cron Job to Automatically Renew Let's Encrypt SSL/TLS Certificates
+It's a good idea to run a daily cron job that attempts to renew Let's Encrypt SSL certificates. It doesn't matter how many times this command is executed as nothing will happen unless your certificate is due for renewal.
+
+To add a crontab, run the following commands:
+
+sudo crontab -e
+Place the following at the end of the file, then close and save it.
+
+0 23 * * * docker run --rm -it --name certbot -v "/docker-volumes/etc/letsencrypt:/etc/letsencrypt" -v "/docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt" -v "/docker-volumes/data/letsencrypt:/data/letsencrypt" -v "/docker-volumes/var/log/letsencrypt:/var/log/letsencrypt" certbot/certbot renew --webroot -w /data/letsencrypt --quiet && docker kill --signal=HUP production-nginx-container
+The above command will run every night at 23:00. If the certificates are due for renewal, the certificates will renew. Additionally, the Nginx configuration and renewed certificates will reload by executing the signal command at the end of the cron command.
+
+Get an A+ Score on SSL Labs
+The configuration entered into the Nginx configuration file earlier should ensure an A+ score on ssllabs.com. Go to ssllabs.com to confirm.
+
+Get an A+ Rating on SSLLabs - How to Set Up Free SSL Certificates from Let's Encrypt using Docker and Nginx
+Get an A+ Rating on SSLLabs
+Hardening Your Site's Security and How to Get an A rating on securityheaders.io
+The last thing left to do is to harden the site's security and get an A rating on securityheaders.io
+
+production.conf
+
+#https://www.ohhaithere.com
+server {
+    # ....
+
+    location / {
+        #security headers
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        #CSP
+        add_header Content-Security-Policy "frame-src 'self'; default-src 'self'; script-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com https://ajax.googleapis.com; img-src 'self'; style-src 'self' https://maxcdn.bootstrapcdn.com; font-src 'self' data: https://maxcdn.bootstrapcdn.com; form-action 'self'; upgrade-insecure-requests;" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # ....
+}
+ 
+
+Get an A Score on securityheaders.io - How to Set Up Free SSL Certificates from Let's Encrypt using Docker and Nginx
+Get an A Score on securityheaders.io
+Closing Thoughts
+There's certainly no doubt that HTTPS adoption has reached a tipping point. Let's Encrypt has had a huge hand to play in this by making free SSL/TLS certificates available to everyone, while Google has been placing pressure on site owners to adopt HTTPS. The newest versions of Google Chrome show sites as insecure if they do not communicate over HTTPS.
+
+There is, however, still a barrier to entry when it comes to implementing free SSL/TLS certificates by Let's Encrypt. While some hosting control panels and PaaS solutions in the cloud offer UI solutions that make the process of obtaining Let's Encrypt certificates effortless, it's certainly not an easy or straightforward thing to do on a Virtual Machine. I spent quite some time reading resources on the internet, but have never been able to find a complete guide that not only explains how Let's Encrypt works, but how to automate it with Docker and set it up in a secure way. I found lots of scattered resources and ran into more problems than I can recall. In the end, I was never able to find a proper guide and had to resort to figuring it out on my own through trial, error and persistence.
+
+This is the guide that I wish was available when I started this journey. It's my contribution towards lowering the barrier to entry for HTTPS adoption. If there's any suggestions or improvements to be made, which I'm sure there would be, let me know in the comments and I will update accordingly.
+
+
+
+
